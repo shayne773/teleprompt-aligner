@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
-import ControlPanel from './src/components/ControlPanel';
-import ScriptViewer from './src/components/SricptViewer';
-import StatusBadge from './src/components/StatusBadge';
-import useTeleprompterSocket from './src/hooks/useTeleprompterSocket';
+import ControlPanel from './components/ControlPanel';
+import ScriptViewer from './components/SricptViewer';
+import StatusBadge from './components/StatusBadge';
+import useTeleprompterSocket from './hooks/useTeleprompterSocket';
 
 const DEFAULT_LINES = [
   'Welcome to Teleprompt Aligner.',
