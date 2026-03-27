@@ -89,6 +89,7 @@ export default function useTeleprompterSocket() {
   }, []);
 
   const start = useCallback(() => {
+    console.log('Starting teleprompter...');
     sendSocketCommand(socketRef.current, 'start');
     setState((prev) => ({ ...prev, isRunning: true }));
   }, []);

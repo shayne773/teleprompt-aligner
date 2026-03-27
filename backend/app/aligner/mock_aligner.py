@@ -1,5 +1,4 @@
 import asyncio
-from app.schemas import ScrollMessage, StatusMessage
 
 class MockAligner:
     def __init__(self):
@@ -10,14 +9,15 @@ class MockAligner:
         self.running = True
         while self.running:
             await asyncio.sleep(1.0)
+            yield {
+                "type": "scroll",
+                "data": {
+                    "current_line_index": self.word_index // 5,
+                    "current_word_index": self.word_index,
+                    "confidence": 0.95,
+                }
+            }
             self.word_index += 1
-            yield ScrollMessage(
-                type='scroll',
-                word_index=self.word_index,
-                line_index=self.word_index // 5,
-                confidence=0.9
-            )
         
     def stop(self):
         self.running = False
-        return StatusMessage(type='status', status='stopped', detail="Alignment stopped")
