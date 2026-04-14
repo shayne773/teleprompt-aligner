@@ -69,7 +69,10 @@ export default function useTeleprompterSocket() {
 
     setConnectionState('connecting');
     const socket = createTeleprompterSocket(socketUrl, {
-      onOpen: () => setConnectionState('connected'),
+      onOpen: () => {
+        setConnectionState('connected');
+        sendSocketCommand(socket, 'connect');
+      },
       onClose: () => {
         socketRef.current = null;
         setConnectionState('disconnected');
