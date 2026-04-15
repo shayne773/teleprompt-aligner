@@ -11,20 +11,15 @@ class MicrophoneCapture:
         channels: int = 1,
         rate: int = 16000,
         chunk: int = 256,
-        seconds_per_window: int = 3,
         format_type=pyaudio.paInt16,
     ):
         self.channels = channels
         self.rate = rate
         self.chunk = chunk
-        self.seconds_per_window = seconds_per_window
         self.format_type = format_type
 
         self.audio = pyaudio.PyAudio()
         self.stream = None
-        self.frames = []
-
-        self.chunks_per_window = int(self.rate / self.chunk * self.seconds_per_window)
 
     def start(self) -> None:
         if self.stream is not None:
@@ -48,22 +43,6 @@ class MicrophoneCapture:
     @property
     def chunk_duration_seconds(self) -> float:
         return self.chunk / self.rate
-
-    def read_window(self) -> bytes | None:
-        """
-        Read one chunk from the microphone.
-        Return a full buffered window of audio bytes when ready.
-        Otherwise return None.
-        """
-        data = self.read_chunk()
-        self.frames.append(data)
-
-        if len(self.frames) >= self.chunks_per_window:
-            window = b"".join(self.frames)
-            self.frames = []
-            return window
-
-        return None
 
     def stop(self) -> None:
         if self.stream is not None:
