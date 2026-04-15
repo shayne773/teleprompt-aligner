@@ -1,16 +1,8 @@
-name: teleprompt-aligner
+name: teleprompt-asr
 channels:
-  - conda-forge
+  - defaults
 dependencies:
   - python=3.11
   - pip
-  - pyaudio
   - pip:
-      - fastapi
-      - uvicorn[standard]
-      - pydantic
-      - pytest
-      - httpx
-      - websockets
-      - torch
-      - nemo_toolkit[asr]
+      - -r requirements.txt

@@ -5,4 +5,5 @@ pytest
 httpx
 websockets
 torch
-nemo_toolkit[asr]
+nemo-toolkit[asr]
+PyAudioWPatch
