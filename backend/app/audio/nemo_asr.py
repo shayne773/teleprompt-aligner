@@ -13,7 +13,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 # Cache-aware streaming FastConformer RNNT model.
-DEFAULT_STREAMING_MODEL = "stt_en_fastconformer_transducer_large_streaming"
+DEFAULT_STREAMING_MODEL = "stt_en_fastconformer_hybrid_large_streaming_multi"
 
 
 class NemoASRTranscriber:
