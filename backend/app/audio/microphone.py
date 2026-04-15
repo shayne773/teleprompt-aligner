@@ -45,6 +45,10 @@ class MicrophoneCapture:
 
         return self.stream.read(num_frames=self.chunk, exception_on_overflow=False)
 
+    @property
+    def chunk_duration_seconds(self) -> float:
+        return self.chunk / self.rate
+
     def read_window(self) -> bytes | None:
         """
         Read one chunk from the microphone.

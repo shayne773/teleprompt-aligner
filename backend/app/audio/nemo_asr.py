@@ -59,21 +59,27 @@ class NemoASRTranscriber:
         return float(np.sqrt(np.mean(np.square(signal), dtype=np.float32)))
 
     @staticmethod
-    def _normalize_transcribe_output(results: Any) -> str:
+    def extract_text(result: Any) -> str:
         """Best-effort extraction of transcript text from NeMo outputs."""
-        if results is None:
+        if result is None:
             return ""
 
-        if isinstance(results, str):
-            return results.strip()
+        if isinstance(result, str):
+            return result.strip()
 
-        if isinstance(results, (list, tuple)) and results:
-            first = results[0]
-            if isinstance(first, str):
-                return first.strip()
-            return str(first).strip()
+        text = getattr(result, "text", None)
+        if isinstance(text, str):
+            return text.strip()
 
-        return str(results).strip()
+        return str(result).strip()
+
+    def _normalize_transcribe_output(self, results: Any) -> str:
+        if isinstance(results, (list, tuple)):
+            if not results:
+                return ""
+            return self.extract_text(results[0])
+
+        return self.extract_text(results)
 
     def _transcribe_via_temp_wav(self, audio_bytes: bytes, sample_rate: int) -> str:
         """Fallback transcription path for NeMo models expecting filepath inputs."""
