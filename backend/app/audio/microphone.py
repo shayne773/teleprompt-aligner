@@ -1,4 +1,8 @@
+import logging
+
 import pyaudiowpatch as pyaudio
+
+logger = logging.getLogger(__name__)
 
 
 class MicrophoneCapture:
@@ -26,6 +30,7 @@ class MicrophoneCapture:
         if self.stream is not None:
             return
 
+        logger.info("Starting microphone stream")
         self.stream = self.audio.open(
             input=True,
             channels=self.channels,
@@ -38,7 +43,7 @@ class MicrophoneCapture:
         if self.stream is None:
             raise RuntimeError("Microphone stream has not been started.")
 
-        return self.stream.read(num_frames=self.chunk)
+        return self.stream.read(num_frames=self.chunk, exception_on_overflow=False)
 
     def read_window(self) -> bytes | None:
         """
@@ -58,10 +63,12 @@ class MicrophoneCapture:
 
     def stop(self) -> None:
         if self.stream is not None:
+            logger.info("Stopping microphone stream")
             self.stream.stop_stream()
             self.stream.close()
             self.stream = None
 
     def terminate(self) -> None:
         self.stop()
+        logger.info("Terminating microphone backend")
         self.audio.terminate()

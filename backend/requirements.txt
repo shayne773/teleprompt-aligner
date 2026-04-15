@@ -4,3 +4,5 @@ pydantic
 pytest
 httpx
 websockets
+torch
+nemo_toolkit[asr]
