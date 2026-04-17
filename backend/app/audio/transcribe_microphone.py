@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 CHANNELS = 1
 SAMPLE_RATE = 16000
-CHUNK_SIZE = 256
+CHUNK_SIZE = 2560
 
 
 def main() -> None:

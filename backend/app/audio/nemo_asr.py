@@ -1,7 +1,11 @@
 """NVIDIA NeMo cache-aware streaming speech-to-text helpers."""
 
 from __future__ import annotations
+from omegaconf import OmegaConf
+from nemo.collections.asr.models.ctc_bpe_models import EncDecCTCModelBPE
+from nemo.collections.asr.parts.utils.rnnt_utils import Hypothesis
 
+import copy
 import inspect
 import logging
 from typing import Any, Optional
@@ -43,12 +47,33 @@ class NemoASRTranscriber:
                 "Loaded model does not expose `conformer_stream_step`; "
                 "please use a cache-aware streaming NeMo model."
             )
+        
+        cfg = copy.deepcopy(self.model._cfg)
+        OmegaConf.set_struct(cfg.preprocessor, False)
+
+        cfg.preprocessor.dither = 0.0
+        cfg.preprocessor.pad_to = 0
+        cfg.preprocessor.normalize = "None"
+
+        self._preprocessor = EncDecCTCModelBPE.from_config_dict(cfg.preprocessor)
+        self._preprocessor.to(self.device)
 
         self._stream_active = False
         self._cache_last_channel: torch.Tensor | None = None
         self._cache_last_time: torch.Tensor | None = None
         self._cache_last_channel_len: torch.Tensor | None = None
         self._last_text = ""
+
+        self._previous_hypotheses: Any = None
+        self._pred_out_stream: torch.Tensor | None = None
+        self._cache_pre_encode: torch.Tensor | None = None
+        self._feature_dim = int(self.model.cfg.preprocessor.features)
+        self._pre_encode_cache_size = self.model.encoder.streaming_cfg.pre_encode_cache_size[1]
+        self._cache_pre_encode = torch.zeros(
+            (1, self._feature_dim, self._pre_encode_cache_size),
+            dtype=torch.float32,
+            device=self.device,
+        )
 
         logger.info("NeMo streaming model loaded successfully.")
 
@@ -104,60 +129,62 @@ class NemoASRTranscriber:
             self._cache_last_time,
             self._cache_last_channel_len,
         ) = cache
+    
+    def preprocess_audio(self, audio):
+        device = self.device
+        audio_signal = torch.from_numpy(audio).unsqueeze_(0).to(device)
+        audio_signal_len = torch.Tensor([audio.shape[0]]).to(device)
+        processed_signal, processed_signal_length = self._preprocessor(input_signal=audio_signal, length=audio_signal_len)
+        return processed_signal, processed_signal_length
 
     def start_stream(self) -> None:
         self._init_stream_cache()
+        self._previous_hypotheses = None
+        self._pred_out_stream = None
+        self._cache_pre_encode = torch.zeros(
+            (1, self._feature_dim, self._pre_encode_cache_size),
+            dtype=torch.float32,
+            device=self.device,
+        )
         self._last_text = ""
         self._stream_active = True
         logger.info("NeMo streaming ASR session started.")
 
-    def _stream_step(self, signal: torch.Tensor, signal_len: torch.Tensor, *, is_last: bool) -> Any:
-        params = inspect.signature(self.model.conformer_stream_step).parameters
-        kwargs: dict[str, Any] = {}
+    def _stream_step(self, processed_signal: torch.Tensor, processed_signal_length: torch.Tensor) -> Any:
 
-        if "processed_signal" in params:
-            kwargs["processed_signal"] = signal
-        elif "audio_signal" in params:
-            kwargs["audio_signal"] = signal
+        return self.model.conformer_stream_step(
+            processed_signal = processed_signal,
+            processed_signal_length = processed_signal_length,
+            cache_last_channel = self._cache_last_channel,
+            cache_last_time = self._cache_last_time,
+            cache_last_channel_len = self._cache_last_channel_len,
+            keep_all_outputs = False,
+            previous_hypotheses = self._previous_hypotheses,
+            previous_pred_out = self._pred_out_stream,
+            drop_extra_pre_encoded = None,
+            return_transcription = True
+        )
 
-        if "processed_signal_length" in params:
-            kwargs["processed_signal_length"] = signal_len
-        elif "audio_signal_length" in params:
-            kwargs["audio_signal_length"] = signal_len
+    def _handle_stream_result(self, hyps) -> list[str]:
+        if hyps is None:
+            return []
 
-        if "cache_last_channel" in params:
-            kwargs["cache_last_channel"] = self._cache_last_channel
-        if "cache_last_time" in params:
-            kwargs["cache_last_time"] = self._cache_last_time
-        if "cache_last_channel_len" in params:
-            kwargs["cache_last_channel_len"] = self._cache_last_channel_len
+        if isinstance(hyps, Hypothesis):
+            return [hyps.text]
 
-        if "keep_all_outputs" in params:
-            kwargs["keep_all_outputs"] = False
-        if "return_transcription" in params:
-            kwargs["return_transcription"] = True
-        if "is_last" in params:
-            kwargs["is_last"] = is_last
-        if "drop_extra_pre_encoded" in params:
-            kwargs["drop_extra_pre_encoded"] = not is_last
+        if isinstance(hyps, (list, tuple)):
+            if len(hyps) == 0:
+                return []
+            if isinstance(hyps[0], Hypothesis):
+                return [hyp.text for hyp in hyps]
+            return [str(x).strip() for x in hyps if str(x).strip()]
 
-        return self.model.conformer_stream_step(**kwargs)
+        text = getattr(hyps, "text", None)
+        if isinstance(text, str) and text.strip():
+            return [text.strip()]
 
-    def _handle_stream_result(self, result: Any) -> str:
-        if isinstance(result, tuple) and len(result) >= 4:
-            maybe_text = result[0]
-            self._cache_last_channel = result[1]
-            self._cache_last_time = result[2]
-            self._cache_last_channel_len = result[3]
-            text = self._extract_text(maybe_text)
-        else:
-            text = self._extract_text(result)
+        return []
 
-        if not text:
-            return ""
-
-        self._last_text = text
-        return text
 
     def process_chunk(self, audio_bytes: bytes, sample_rate: int) -> str:
         if not self._stream_active:
@@ -173,31 +200,42 @@ class NemoASRTranscriber:
         if self.silence_threshold > 0 and self.rms(waveform) < self.silence_threshold:
             return ""
 
-        signal = torch.from_numpy(waveform).unsqueeze(0).to(self.device)
-        signal_len = torch.tensor([waveform.shape[0]], dtype=torch.long, device=self.device)
+        processed_signal, processed_signal_length = self.preprocess_audio(audio=waveform)
+        processed_signal = torch.cat([self._cache_pre_encode, processed_signal], dim=-1)
+        processed_signal_length += self._cache_pre_encode.shape[1]
+
+        self._cache_pre_encode = processed_signal[:, :, -self._pre_encode_cache_size:]
 
         with torch.no_grad():
-            result = self._stream_step(signal, signal_len, is_last=False)
-        return self._handle_stream_result(result)
+            (
+                self._pred_out_stream,
+                transcribed_texts,
+                self._cache_last_channel,
+                self._cache_last_time,
+                self._cache_last_channel_len,
+                self._previous_hypotheses
+            ) = self._stream_step(processed_signal, processed_signal_length)
+        
+        texts  = self._handle_stream_result(transcribed_texts)
+        text = texts[0] if texts else ""
+        self._last_text = text
+
+        return text
 
     def finish_stream(self) -> str:
         if not self._stream_active:
             return ""
 
-        empty_signal = torch.zeros((1, 0), dtype=torch.float32, device=self.device)
-        empty_len = torch.tensor([0], dtype=torch.long, device=self.device)
-
-        with torch.no_grad():
-            result = self._stream_step(empty_signal, empty_len, is_last=True)
-
-        final_text = self._handle_stream_result(result)
         self._stream_active = False
         logger.info("NeMo streaming ASR session finalized.")
-        return final_text
+        return self._last_text or ""
 
     def reset_stream(self) -> None:
         self._stream_active = False
         self._cache_last_channel = None
         self._cache_last_time = None
         self._cache_last_channel_len = None
+        self._previous_hypotheses = None
+        self._pred_out_stream = None
+        self._cache_pre_encode = None
         self._last_text = ""
